@@ -5,8 +5,6 @@ use openssl::memcmp;
 use openssl::rand::rand_bytes;
 use std::convert::TryInto;
 use std::io;
-use tokio_util::codec::Decoder;
-use tokio_util::codec::Encoder;
 
 use crate::voice::Clientbound;
 use crate::voice::Serverbound;
@@ -149,6 +147,14 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> CryptState<EncodeDst,
         dst.resize(4, 0);
         let mut inner = dst.split_off(4);
 
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "asynchronous-codec")] {
+                use asynchronous_codec::Encoder as _;
+            } else {
+                use tokio_util::codec::Encoder as _;
+            }
+        }
+
         self.codec
             .encode(packet, &mut inner)
             .expect("VoiceEncoder is infallible");
@@ -213,6 +219,14 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> CryptState<EncodeDst,
             self.decrypt_nonce = saved_nonce;
         }
         self.lost = (self.lost as i32 + lost as i32) as u32;
+
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "asynchronous-codec")] {
+                use asynchronous_codec::Decoder as _;
+            } else {
+                use tokio_util::codec::Decoder as _;
+            }
+        }
 
         Ok(self
             .codec
@@ -330,17 +344,13 @@ fn s2(block: u128) -> u128 {
     rot ^ (carry * 0x86)
 }
 
-impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> Decoder
-    for CryptState<EncodeDst, DecodeDst>
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> CryptState<EncodeDst, DecodeDst>
 {
-    type Item = VoicePacket<DecodeDst>;
-    type Error = io::Error;
-
-    fn decode(&mut self, buf_mut: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        if buf_mut.is_empty() {
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<VoicePacket<DecodeDst>>, io::Error> {
+        if src.is_empty() {
             return Ok(None);
         }
-        self.decrypt(buf_mut)
+        self.decrypt(src)
             .unwrap_or_else(|_| {
                 Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -351,7 +361,43 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> Decoder
     }
 }
 
-impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> Encoder<VoicePacket<EncodeDst>>
+#[cfg(feature = "tokio-codec")]
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> tokio_util::codec::Decoder
+    for CryptState<EncodeDst, DecodeDst>
+{
+    type Item = VoicePacket<DecodeDst>;
+    type Error = io::Error; // never
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        self.decode(src)
+    }
+}
+
+#[cfg(feature = "asynchronous-codec")]
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> asynchronous_codec::Decoder
+    for CryptState<EncodeDst, DecodeDst>
+{
+    type Item = VoicePacket<DecodeDst>;
+    type Error = io::Error; // never
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        self.decode(src)
+    }
+}
+
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> CryptState<EncodeDst, DecodeDst> {
+    fn encode(
+        &mut self,
+        item: VoicePacket<EncodeDst>,
+        dst: &mut BytesMut,
+    ) -> Result<(), io::Error> {
+        self.encrypt(item, dst);
+        Ok(())
+    }
+}
+
+#[cfg(feature = "tokio-codec")]
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> tokio_util::codec::Encoder<VoicePacket<EncodeDst>>
     for CryptState<EncodeDst, DecodeDst>
 {
     type Error = io::Error; // never
@@ -361,8 +407,23 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> Encoder<VoicePacket<E
         item: VoicePacket<EncodeDst>,
         dst: &mut BytesMut,
     ) -> Result<(), Self::Error> {
-        self.encrypt(item, dst);
-        Ok(())
+        self.encode(item, dst)
+    }
+}
+
+#[cfg(feature = "asynchronous-codec")]
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> asynchronous_codec::Encoder
+    for CryptState<EncodeDst, DecodeDst>
+{
+    type Item = VoicePacket<EncodeDst>;
+    type Error = io::Error; // never
+
+    fn encode(
+        &mut self,
+        item: Self::Item,
+        dst: &mut BytesMut,
+    ) -> Result<(), Self::Error> {
+        self.encode(item, dst)
     }
 }
 

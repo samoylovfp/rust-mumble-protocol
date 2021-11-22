@@ -30,6 +30,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "asynchronous-codec"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0de5164e5edbf51c45fb8c2d9664ae1c095cce1b265ecf7569093c0d66ef690"
+dependencies = [
+ "bytes",
+ "futures-sink",
+ "futures-util",
+ "memchr",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -290,8 +303,10 @@ name = "mumble-protocol-2x"
 version = "0.4.1"
 dependencies = [
  "argparse",
+ "asynchronous-codec",
  "byteorder",
  "bytes",
+ "cfg-if 1.0.0",
  "futures",
  "native-tls",
  "openssl",

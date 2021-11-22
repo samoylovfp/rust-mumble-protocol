@@ -9,8 +9,6 @@ use std::fmt::Debug;
 use std::io;
 use std::io::{Cursor, Read};
 use std::marker::PhantomData;
-use tokio_util::codec::Decoder;
-use tokio_util::codec::Encoder;
 
 use super::varint::BufMutExt;
 use super::varint::ReadExt;
@@ -131,21 +129,16 @@ impl VoicePacketDst for Clientbound {
     }
 }
 
-impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> Decoder
-    for VoiceCodec<EncodeDst, DecodeDst>
-{
-    type Item = VoicePacket<DecodeDst>;
-    type Error = io::Error;
-
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> VoiceCodec<EncodeDst, DecodeDst> {
     // Note: other code assumes this returns Ok(Some(_)) or Err(_) but never Ok(None)
-    fn decode(&mut self, buf_mut: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let mut buf = Cursor::new(&buf_mut);
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<VoicePacket<DecodeDst>>, io::Error> {
+        let mut buf = Cursor::new(&src);
         let header = buf.read_u8()?;
         let kind = header >> 5;
         let target = header & 0b11111;
         let result = if kind == 1 {
             let timestamp = buf.read_varint()?;
-            buf_mut.advance(buf_mut.len());
+            src.advance(src.len());
             VoicePacket::Ping { timestamp }
         } else {
             let session_id = DecodeDst::read_session_id(&mut buf)?;
@@ -154,19 +147,19 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> Decoder
                 0 | 2 | 3 => {
                     let mut frames = Vec::new();
                     let position = buf.position();
-                    buf_mut.advance(position as usize);
+                    src.advance(position as usize);
                     loop {
-                        if buf_mut.is_empty() {
+                        if src.is_empty() {
                             return Err(io::ErrorKind::UnexpectedEof.into());
                         }
-                        let header = buf_mut[0];
-                        buf_mut.advance(1);
+                        let header = src[0];
+                        src.advance(1);
 
                         let len = (header & !0x80) as usize;
-                        if buf_mut.len() < len {
+                        if src.len() < len {
                             return Err(io::ErrorKind::UnexpectedEof.into());
                         }
-                        frames.push(buf_mut.split_to(len).freeze());
+                        frames.push(src.split_to(len).freeze());
                         if header & 0x80 != 0x80 {
                             break;
                         }
@@ -181,13 +174,13 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> Decoder
                 4 => {
                     let header = buf.read_varint()?;
                     let position = buf.position();
-                    buf_mut.advance(position as usize);
+                    src.advance(position as usize);
                     let termination_bit = header & 0x2000 == 0x2000;
                     let len = (header & !0x2000) as usize;
-                    if buf_mut.len() < len {
+                    if src.len() < len {
                         return Err(io::ErrorKind::UnexpectedEof.into());
                     }
-                    let frame = buf_mut.split_to(len).freeze();
+                    let frame = src.split_to(len).freeze();
                     VoicePacketPayload::Opus(frame, termination_bit)
                 }
                 _ => {
@@ -197,10 +190,10 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> Decoder
                     ));
                 }
             };
-            let position_info = if buf_mut.is_empty() {
+            let position_info = if src.is_empty() {
                 None
             } else {
-                Some(buf_mut.split().freeze())
+                Some(src.split().freeze())
             };
             VoicePacket::Audio {
                 _dst: PhantomData,
@@ -215,16 +208,37 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> Decoder
     }
 }
 
-impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> Encoder<VoicePacket<EncodeDst>>
+#[cfg(feature = "tokio-codec")]
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> tokio_util::codec::Decoder
     for VoiceCodec<EncodeDst, DecodeDst>
 {
+    type Item = VoicePacket<DecodeDst>;
     type Error = io::Error; // never
 
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        self.decode(src)
+    }
+}
+
+#[cfg(feature = "asynchronous-codec")]
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> asynchronous_codec::Decoder
+    for VoiceCodec<EncodeDst, DecodeDst>
+{
+    type Item = VoicePacket<DecodeDst>;
+    type Error = io::Error; // never
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        self.decode(src)
+    }
+}
+
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> VoiceCodec<EncodeDst, DecodeDst>
+{
     fn encode(
         &mut self,
         item: VoicePacket<EncodeDst>,
         dst: &mut BytesMut,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), io::Error> {
         match item {
             VoicePacket::Ping { timestamp } => {
                 dst.reserve(11);
@@ -274,5 +288,36 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> Encoder<VoicePacket<E
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(feature = "tokio-codec")]
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> tokio_util::codec::Encoder<VoicePacket<EncodeDst>>
+    for VoiceCodec<EncodeDst, DecodeDst>
+{
+    type Error = io::Error; // never
+
+    fn encode(
+        &mut self,
+        item: VoicePacket<EncodeDst>,
+        dst: &mut BytesMut,
+    ) -> Result<(), Self::Error> {
+        self.encode(item, dst)
+    }
+}
+
+#[cfg(feature = "asynchronous-codec")]
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> asynchronous_codec::Encoder
+    for VoiceCodec<EncodeDst, DecodeDst>
+{
+    type Item = VoicePacket<EncodeDst>;
+    type Error = io::Error; // never
+
+    fn encode(
+        &mut self,
+        item: Self::Item,
+        dst: &mut BytesMut,
+    ) -> Result<(), Self::Error> {
+        self.encode(item, dst)
     }
 }

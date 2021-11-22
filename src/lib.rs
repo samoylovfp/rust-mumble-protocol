@@ -14,3 +14,6 @@ pub mod voice;
 
 pub use voice::Clientbound;
 pub use voice::Serverbound;
+
+#[cfg(not(any(feature = "asynchronous-codec", feature = "tokio-codec")))]
+compile_error!("need at least one of asynchronous-codec or tokio-codec features to compile");

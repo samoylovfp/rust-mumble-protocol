@@ -1,18 +1,17 @@
 //! Control channel messages and codecs
 
+use std::convert::TryFrom;
+use std::convert::TryInto;
+use std::io;
+use std::io::Cursor;
+use std::marker::PhantomData;
+
 use bytes::Buf;
 use bytes::BufMut;
 use bytes::Bytes;
 use bytes::BytesMut;
 use protobuf::error::ProtobufError;
 use protobuf::Message;
-use std::convert::TryFrom;
-use std::convert::TryInto;
-use std::io;
-use std::io::Cursor;
-use std::marker::PhantomData;
-use tokio_util::codec::Decoder;
-use tokio_util::codec::Encoder;
 
 use crate::voice::Clientbound;
 use crate::voice::Serverbound;
@@ -60,10 +59,7 @@ impl Default for RawControlCodec {
     }
 }
 
-impl Decoder for RawControlCodec {
-    type Item = RawControlPacket;
-    type Error = io::Error;
-
+impl RawControlCodec {
     fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<RawControlPacket>, io::Error> {
         let buf_len = buf.len();
         if buf_len >= 6 {
@@ -86,9 +82,27 @@ impl Decoder for RawControlCodec {
     }
 }
 
-impl Encoder<RawControlPacket> for RawControlCodec {
+#[cfg(feature = "tokio-codec")]
+impl tokio_util::codec::Decoder for RawControlCodec {
+    type Item = RawControlPacket;
     type Error = io::Error;
 
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        self.decode(src)
+    }
+}
+
+#[cfg(feature = "asynchronous-codec")]
+impl asynchronous_codec::Decoder for RawControlCodec {
+    type Item = RawControlPacket;
+    type Error = io::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        self.decode(src)
+    }
+}
+
+impl RawControlCodec {
     fn encode(&mut self, item: RawControlPacket, dst: &mut BytesMut) -> Result<(), io::Error> {
         let id = item.id;
         let bytes = &item.bytes;
@@ -98,6 +112,25 @@ impl Encoder<RawControlPacket> for RawControlCodec {
         dst.put_u32(len as u32);
         dst.put_slice(bytes);
         Ok(())
+    }
+}
+
+#[cfg(feature = "tokio-codec")]
+impl tokio_util::codec::Encoder<RawControlPacket> for RawControlCodec {
+    type Error = io::Error;
+
+    fn encode(&mut self, item: RawControlPacket, dst: &mut BytesMut) -> Result<(), io::Error> {
+        self.encode(item, dst)
+    }
+}
+
+#[cfg(feature = "asynchronous-codec")]
+impl asynchronous_codec::Encoder for RawControlCodec {
+    type Item = RawControlPacket;
+    type Error = io::Error;
+
+    fn encode(&mut self, item: RawControlPacket, dst: &mut BytesMut) -> Result<(), io::Error> {
+        self.encode(item, dst)
     }
 }
 
@@ -136,14 +169,12 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> Default
     }
 }
 
-impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> Decoder
-    for ControlCodec<EncodeDst, DecodeDst>
-{
-    type Item = ControlPacket<DecodeDst>;
-    type Error = io::Error;
-
-    fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        Ok(if let Some(raw_packet) = self.inner.decode(buf)? {
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> ControlCodec<EncodeDst, DecodeDst> {
+    fn decode(
+        &mut self,
+        src: &mut BytesMut,
+    ) -> Result<Option<ControlPacket<DecodeDst>>, io::Error> {
+        Ok(if let Some(raw_packet) = self.inner.decode(src)? {
             Some(raw_packet.try_into()?)
         } else {
             None
@@ -151,14 +182,55 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> Decoder
     }
 }
 
-impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> Encoder<ControlPacket<EncodeDst>>
+#[cfg(feature = "tokio-codec")]
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> tokio_util::codec::Decoder
     for ControlCodec<EncodeDst, DecodeDst>
+{
+    type Item = ControlPacket<DecodeDst>;
+    type Error = io::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        self.decode(src)
+    }
+}
+
+#[cfg(feature = "asynchronous-codec")]
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> asynchronous_codec::Decoder
+    for ControlCodec<EncodeDst, DecodeDst>
+{
+    type Item = ControlPacket<DecodeDst>;
+    type Error = io::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        self.decode(src)
+    }
+}
+
+#[cfg(feature = "tokio-codec")]
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst>
+    tokio_util::codec::Encoder<ControlPacket<EncodeDst>> for ControlCodec<EncodeDst, DecodeDst>
 {
     type Error = io::Error;
 
     fn encode(
         &mut self,
         item: ControlPacket<EncodeDst>,
+        dst: &mut BytesMut,
+    ) -> Result<(), Self::Error> {
+        self.inner.encode(item.into(), dst)
+    }
+}
+
+#[cfg(feature = "asynchronous-codec")]
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst>
+    asynchronous_codec::Encoder for ControlCodec<EncodeDst, DecodeDst>
+{
+    type Item = ControlPacket<EncodeDst>;
+    type Error = io::Error;
+
+    fn encode(
+        &mut self,
+        item: Self::Item,
         dst: &mut BytesMut,
     ) -> Result<(), Self::Error> {
         self.inner.encode(item.into(), dst)
@@ -192,9 +264,19 @@ macro_rules! define_packet_from {
         impl<$Dst: VoicePacketDst> From<VoicePacket<Dst>> for RawControlPacket {
             fn from(msg: VoicePacket<Dst>) -> Self {
                 let mut buf = BytesMut::new();
+
+                cfg_if::cfg_if! {
+                    if #[cfg(feature = "asynchronous-codec")] {
+                        use asynchronous_codec::Encoder as _;
+                    } else {
+                        use tokio_util::codec::Encoder as _;
+                    }
+                }
+
                 VoiceCodec::<Dst, Dst>::default()
                     .encode(msg, &mut buf)
                     .expect("VoiceEncoder is infallible");
+
                 Self {
                     id: msgs::id::UDPTunnel,
                     bytes: buf.freeze(),
@@ -219,6 +301,14 @@ macro_rules! define_packet_from {
             type Error = io::Error;
 
             fn try_from(bytes: Bytes) -> Result<Self, Self::Error> {
+                cfg_if::cfg_if! {
+                    if #[cfg(feature = "asynchronous-codec")] {
+                        use asynchronous_codec::Decoder as _;
+                    } else {
+                        use tokio_util::codec::Decoder as _;
+                    }
+                }
+
                 VoiceCodec::<$Dst, $Dst>::default()
                     .decode(&mut BytesMut::from(bytes.as_ref()))
                     .map(|it| it.expect("VoiceCodec is stateless"))
