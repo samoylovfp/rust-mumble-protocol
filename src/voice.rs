@@ -1,14 +1,15 @@
 //! Voice channel packets and codecs
 
+use std::fmt::Debug;
+use std::io;
+use std::io::{Cursor, Read};
+use std::marker::PhantomData;
+
 use byteorder::ReadBytesExt;
 use bytes::Buf;
 use bytes::BufMut;
 use bytes::Bytes;
 use bytes::BytesMut;
-use std::fmt::Debug;
-use std::io;
-use std::io::{Cursor, Read};
-use std::marker::PhantomData;
 
 use super::varint::BufMutExt;
 use super::varint::ReadExt;
@@ -232,8 +233,7 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> asynchronous_codec::D
     }
 }
 
-impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> VoiceCodec<EncodeDst, DecodeDst>
-{
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> VoiceCodec<EncodeDst, DecodeDst> {
     fn encode(
         &mut self,
         item: VoicePacket<EncodeDst>,
@@ -292,8 +292,8 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> VoiceCodec<EncodeDst,
 }
 
 #[cfg(feature = "tokio-codec")]
-impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> tokio_util::codec::Encoder<VoicePacket<EncodeDst>>
-    for VoiceCodec<EncodeDst, DecodeDst>
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst>
+    tokio_util::codec::Encoder<VoicePacket<EncodeDst>> for VoiceCodec<EncodeDst, DecodeDst>
 {
     type Error = io::Error; // never
 
@@ -313,11 +313,7 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> asynchronous_codec::E
     type Item = VoicePacket<EncodeDst>;
     type Error = io::Error; // never
 
-    fn encode(
-        &mut self,
-        item: Self::Item,
-        dst: &mut BytesMut,
-    ) -> Result<(), Self::Error> {
+    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
         self.encode(item, dst)
     }
 }

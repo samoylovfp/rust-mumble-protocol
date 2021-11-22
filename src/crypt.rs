@@ -1,10 +1,11 @@
 //! Implementation of the cryptography used for Mumble's voice channel
 
+use std::convert::TryInto;
+use std::io;
+
 use bytes::BytesMut;
 use openssl::memcmp;
 use openssl::rand::rand_bytes;
-use std::convert::TryInto;
-use std::io;
 
 use crate::voice::Clientbound;
 use crate::voice::Serverbound;
@@ -344,8 +345,7 @@ fn s2(block: u128) -> u128 {
     rot ^ (carry * 0x86)
 }
 
-impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> CryptState<EncodeDst, DecodeDst>
-{
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> CryptState<EncodeDst, DecodeDst> {
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<VoicePacket<DecodeDst>>, io::Error> {
         if src.is_empty() {
             return Ok(None);
@@ -397,8 +397,8 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> CryptState<EncodeDst,
 }
 
 #[cfg(feature = "tokio-codec")]
-impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> tokio_util::codec::Encoder<VoicePacket<EncodeDst>>
-    for CryptState<EncodeDst, DecodeDst>
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst>
+    tokio_util::codec::Encoder<VoicePacket<EncodeDst>> for CryptState<EncodeDst, DecodeDst>
 {
     type Error = io::Error; // never
 
@@ -418,11 +418,7 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> asynchronous_codec::E
     type Item = VoicePacket<EncodeDst>;
     type Error = io::Error; // never
 
-    fn encode(
-        &mut self,
-        item: Self::Item,
-        dst: &mut BytesMut,
-    ) -> Result<(), Self::Error> {
+    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
         self.encode(item, dst)
     }
 }
@@ -431,8 +427,9 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> asynchronous_codec::E
 mod test {
     use bytes::BufMut;
 
-    use super::*;
     use crate::voice::VoicePacketPayload;
+
+    use super::*;
 
     fn u128hex(src: &str) -> u128 {
         u128::from_str_radix(src, 16).unwrap()

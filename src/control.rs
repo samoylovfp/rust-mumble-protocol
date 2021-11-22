@@ -222,17 +222,13 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst>
 }
 
 #[cfg(feature = "asynchronous-codec")]
-impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst>
-    asynchronous_codec::Encoder for ControlCodec<EncodeDst, DecodeDst>
+impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> asynchronous_codec::Encoder
+    for ControlCodec<EncodeDst, DecodeDst>
 {
     type Item = ControlPacket<EncodeDst>;
     type Error = io::Error;
 
-    fn encode(
-        &mut self,
-        item: Self::Item,
-        dst: &mut BytesMut,
-    ) -> Result<(), Self::Error> {
+    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
         self.inner.encode(item.into(), dst)
     }
 }
