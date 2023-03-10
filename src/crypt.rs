@@ -3,9 +3,14 @@
 use std::convert::TryInto;
 use std::io;
 
+use aes::cipher::BlockDecrypt;
+use aes::cipher::BlockEncrypt;
+use aes::cipher::KeyInit;
+use aes::Aes128;
 use bytes::BytesMut;
-use openssl::memcmp;
-use openssl::rand::rand_bytes;
+use rand::CryptoRng;
+use rand::RngCore;
+use subtle::ConstantTimeEq;
 
 use crate::voice::Clientbound;
 use crate::voice::Serverbound;
@@ -69,7 +74,8 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> CryptState<EncodeDst,
     /// Creates a new CryptState with randomly generated key and initial encrypt- and decrypt-nonce.
     pub fn generate_new() -> Self {
         let mut key = [0; KEY_SIZE];
-        rand_bytes(&mut key).unwrap();
+        let rng: &mut dyn CryptoRng = &mut rand::thread_rng();
+        rand::thread_rng().fill_bytes(&mut key);
 
         CryptState {
             codec: VoiceCodec::new(),
@@ -207,7 +213,7 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> CryptState<EncodeDst,
         }
 
         let tag = self.ocb_decrypt(buf.as_mut());
-        if !memcmp::eq(&tag.to_be_bytes()[0..3], &header[1..4]) {
+        if tag.to_be_bytes()[0..3].ct_ne(&header[1..4]).into() {
             self.decrypt_nonce = saved_nonce;
             return Err(DecryptError::Mac);
         }
@@ -307,35 +313,18 @@ impl<EncodeDst: VoicePacketDst, DecodeDst: VoicePacketDst> CryptState<EncodeDst,
 
     /// AES-128 encryption primitive.
     fn aes_encrypt(&self, block: u128) -> u128 {
-        // TODO is there no better way to do this (and aes_decrypt)?
-        let mut result = [0u8; BLOCK_SIZE * 2];
-        let mut crypter = openssl::symm::Crypter::new(
-            openssl::symm::Cipher::aes_128_ecb(),
-            openssl::symm::Mode::Encrypt,
-            &self.key,
-            None,
-        )
-        .unwrap();
-        crypter.pad(false);
-        crypter.update(&block.to_be_bytes(), &mut result).unwrap();
-        crypter.finalize(&mut result).unwrap();
-        u128::from_be_bytes((&result[..BLOCK_SIZE]).try_into().unwrap())
+        let aes_cipher = Aes128::new(&self.key.into());
+        let mut block_to_encrypt = block.to_be_bytes().into();
+        aes_cipher.encrypt_block(&mut block_to_encrypt);
+        u128::from_be_bytes(block_to_encrypt.into())
     }
 
     /// AES-128 decryption primitive.
     fn aes_decrypt(&self, block: u128) -> u128 {
-        let mut result = [0u8; BLOCK_SIZE * 2];
-        let mut crypter = openssl::symm::Crypter::new(
-            openssl::symm::Cipher::aes_128_ecb(),
-            openssl::symm::Mode::Decrypt,
-            &self.key,
-            None,
-        )
-        .unwrap();
-        crypter.pad(false);
-        crypter.update(&block.to_be_bytes(), &mut result).unwrap();
-        crypter.finalize(&mut result).unwrap();
-        u128::from_be_bytes((&result[..BLOCK_SIZE]).try_into().unwrap())
+        let aes_cipher = Aes128::new(&self.key.into());
+        let mut block_to_decrypt = block.to_be_bytes().into();
+        aes_cipher.decrypt_block(&mut block_to_decrypt);
+        u128::from_be_bytes(block_to_decrypt.into())
     }
 }
 

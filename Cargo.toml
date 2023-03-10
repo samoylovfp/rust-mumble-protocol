@@ -1,17 +1,14 @@
 [package]
-name = "mumble-protocol-2x"
+name = "mumble-protocol-2x-no-openssl"
 version = "0.5.0"
-authors = [
-  "Marco Rebhan <me@dblsaiko.net>",
-  "Jonas Herzig <me@johni0702.de>"
-]
+authors = ["Marco Rebhan <me@dblsaiko.net>", "Jonas Herzig <me@johni0702.de>"]
 edition = "2018"
 description = "Rust implementation of the Mumble protocol"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/2xsaiko/rust-mumble-protocol"
 
 [features]
-default = ["openssl", "tokio-codec"]
+default = ["tokio-codec"]
 webrtc-extensions = []
 tokio-codec = ["tokio-util"]
 
@@ -24,8 +21,10 @@ byteorder = "1"
 tokio-util = { version = "0.6", features = ["codec"], optional = true }
 asynchronous-codec = { version = "0.6.0", optional = true }
 protobuf = "2"
-openssl = { version = "0.10", optional = true }
 cfg-if = "1.0.0"
+subtle = "2.5.0"
+rand = "0.8.5"
+aes = "0.8.2"
 
 [dev-dependencies]
 argparse = "0.2"
